@@ -24,6 +24,7 @@ RedisAdapterSingle::RedisAdapterSingle( string key, string connection )
   _timeKey    = _baseKey + ":TIME";
   _dataBaseKey= _baseKey + ":DATA";
   _deviceKey = _baseKey + ":DEVICES";
+  _abortKey   = _baseKey + ":ABORT";
 
   TRACE(2,"Loaded Redis Adapters");
 
@@ -40,6 +41,7 @@ RedisAdapterSingle::RedisAdapterSingle(const RedisAdapterSingle& ra)
   _timeKey  = _baseKey + ":TIME";
   _dataBaseKey  = _baseKey + ":DATA";
   _deviceKey = _baseKey + ":DEVICES";
+  _abortKey   = _baseKey + ":ABORT";
 }
 
 
@@ -85,7 +87,11 @@ void RedisAdapterSingle::setDevice(string name){
 
  string RedisAdapterSingle::getValue(string key){
 
-  return *(_redis.get(key));
+  auto val = _redis.get(key);
+  if (!val) {
+    throw std::runtime_error("Key not found: " + key);
+  }
+  return *val;
 }
 
 void RedisAdapterSingle::setValue(string key, string val){
@@ -177,7 +183,7 @@ void RedisAdapterSingle::streamRead(string key, string time, int count, ItemStre
   try{
     _redis.xrevrange(key, "+","-", count, back_inserter(dest));
   }catch (const std::exception &err) {
-    TRACE(1,"xadd(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
+    TRACE(1,"xrevrange(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
   }
 }
 
@@ -186,7 +192,7 @@ void RedisAdapterSingle::streamRead(string key, string time, int count, vector<f
 
   try{
     ItemStream result;
-    streamRead(key,time,1, result);
+    streamRead(key,time,count, result);
     for(auto data : result){
         string timeID = data.first;
         for (auto val : data.second){
@@ -197,7 +203,7 @@ void RedisAdapterSingle::streamRead(string key, string time, int count, vector<f
         }
     }  
   }catch (const std::exception &err) {
-    TRACE(1,"xadd(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
+    TRACE(1,"xrevrange(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
   }
 }
 
@@ -207,6 +213,17 @@ void RedisAdapterSingle::logWrite(string key, string msg, string source){
   streamWrite(data, "*", key, 1000);
 }
 
+
+IRedisAdapter::ItemStream RedisAdapterSingle::logRead(uint count){
+
+  ItemStream is;
+  try{
+    _redis.xrevrange(getLogKey(), "+","-", count, back_inserter(is));
+  } catch (const std::exception &err) {
+    TRACE(1,"logRead(" + getLogKey()  + "," + to_string(count) + ") failed: " + err.what());
+  }
+  return is;
+}
 
 vector<pair<string,string>> RedisAdapterSingle::logRead(std::string key, uint count){
   vector<pair<string,string>> out;
@@ -224,7 +241,7 @@ vector<pair<string,string>> RedisAdapterSingle::logRead(std::string key, uint co
     return out;  
 
   }catch (const std::exception &err) {
-    TRACE(1,"xadd(" + key + ", " +timeID + ":" + to_string(count) + ", ...) failed: " + err.what());
+    TRACE(1,"xrevrange(" + key + ", " +timeID + ":" + to_string(count) + ", ...) failed: " + err.what());
     return out;
   }
 }
@@ -270,7 +287,7 @@ void RedisAdapterSingle::setDeviceStatus(bool status){
 
 void RedisAdapterSingle::copyKey( string src, string dest, bool data){
   if (data)
-    _redis.command<void>("copy", src, dest);
+    _redis.command<void>("copy", src, dest, "REPLACE");
   else
     _redis.command<void>("copy", src, dest);
 
@@ -353,7 +370,7 @@ void RedisAdapterSingle::listener(){
 
             _sub.on_message([&](std::string key, std::string msg) { 
 
-                  auto search = subscriptions.find(msg);
+                  auto search = subscriptions.find(key);
                   if (search != subscriptions.end()) {
                     search->second( key, msg);
                   }

@@ -25,13 +25,14 @@ RedisAdapterCluster::RedisAdapterCluster( string key, string connection )
   _timeKey    = _baseKey + ":TIME";
   _dataBaseKey= _baseKey + ":DATA";
   _deviceKey = _baseKey + ":DEVICES";
+  _abortKey   = _baseKey + ":ABORT";
 
   TRACE(2,"Loaded Redis Adapters");
 
 }
 
 RedisAdapterCluster::RedisAdapterCluster(const RedisAdapterCluster& ra)
-:_redisCluster("tcp://127.0.0.1:30001")
+:_redisCluster(ra._connection)
 {
   _baseKey    = ra.getBaseKey();
   _configKey  = _baseKey + ":CONFIG";
@@ -41,6 +42,7 @@ RedisAdapterCluster::RedisAdapterCluster(const RedisAdapterCluster& ra)
   _timeKey  = _baseKey + ":TIME";
   _dataBaseKey  = _baseKey + ":DATA";
   _deviceKey = _baseKey + ":DEVICES";
+  _abortKey   = _baseKey + ":ABORT";
 }
 
 
@@ -86,7 +88,11 @@ void RedisAdapterCluster::setDevice(string name){
 
  string RedisAdapterCluster::getValue(string key){
 
-  return *(_redisCluster.get(key));
+  auto val = _redisCluster.get(key);
+  if (!val) {
+    throw std::runtime_error("Key not found: " + key);
+  }
+  return *val;
 }
 
 void RedisAdapterCluster::setValue(string key, string val){
@@ -178,7 +184,7 @@ void RedisAdapterCluster::streamRead(string key, string time, int count, ItemStr
   try{
     _redisCluster.xrevrange(key, "+","-", count, back_inserter(dest));
   }catch (const std::exception &err) {
-    TRACE(1,"xadd(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
+    TRACE(1,"xrevrange(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
   }
 }
 
@@ -187,7 +193,7 @@ void RedisAdapterCluster::streamRead(string key, string time, int count, vector<
 
   try{
     ItemStream result;
-    streamRead(key,time,1, result);
+    streamRead(key,time,count, result);
     for(auto data : result){
         string timeID = data.first;
         for (auto val : data.second){
@@ -198,7 +204,7 @@ void RedisAdapterCluster::streamRead(string key, string time, int count, vector<
         }
     }  
   }catch (const std::exception &err) {
-    TRACE(1,"xadd(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
+    TRACE(1,"xrevrange(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
   }
 }
 
@@ -208,6 +214,17 @@ void RedisAdapterCluster::logWrite(string key, string msg, string source){
   streamWrite(data, "*", key, 1000);
 }
 
+
+IRedisAdapter::ItemStream RedisAdapterCluster::logRead(uint count){
+
+  ItemStream is;
+  try{
+    _redisCluster.xrevrange(getLogKey(), "+","-", count, back_inserter(is));
+  } catch (const std::exception &err) {
+    TRACE(1,"logRead(" + getLogKey()  + "," + to_string(count) + ") failed: " + err.what());
+  }
+  return is;
+}
 
 vector<pair<string,string>> RedisAdapterCluster::logRead(std::string key, uint count){
   vector<pair<string,string>> out;
@@ -225,7 +242,7 @@ vector<pair<string,string>> RedisAdapterCluster::logRead(std::string key, uint c
     return out;  
 
   }catch (const std::exception &err) {
-    TRACE(1,"xadd(" + key + ", " +timeID + ":" + to_string(count) + ", ...) failed: " + err.what());
+    TRACE(1,"xrevrange(" + key + ", " +timeID + ":" + to_string(count) + ", ...) failed: " + err.what());
     return out;
   }
 }
@@ -271,7 +288,7 @@ void RedisAdapterCluster::setDeviceStatus(bool status){
 
 void RedisAdapterCluster::copyKey( string src, string dest, bool data){
   if (data)
-    _redisCluster.command<void>("copy", src, dest);
+    _redisCluster.command<void>("copy", src, dest, "REPLACE");
   else
     _redisCluster.command<void>("copy", src, dest);
 
@@ -349,7 +366,7 @@ void RedisAdapterCluster::listener(){
 
             _sub.on_message([&](std::string key, std::string msg) { 
 
-                  auto search = subscriptions.find(msg);
+                  auto search = subscriptions.find(key);
                   if (search != subscriptions.end()) {
                     search->second( key, msg);
                   }
