@@ -24,6 +24,7 @@ RedisAdapter::RedisAdapter( string key, string connection )
   _timeKey    = _baseKey + ":TIME";
   _dataBaseKey= _baseKey + ":DATA";
   _deviceKey = _baseKey + ":DEVICES";
+  _abortKey   = _baseKey + ":ABORT";
 
   TRACE(2,"Loaded Redis Adapters");
 
@@ -40,6 +41,7 @@ RedisAdapter::RedisAdapter(const RedisAdapter& ra)
   _timeKey  = _baseKey + ":TIME";
   _dataBaseKey  = _baseKey + ":DATA";
   _deviceKey = _baseKey + ":DEVICES";
+  _abortKey   = _baseKey + ":ABORT";
 }
 
 
@@ -85,7 +87,11 @@ void RedisAdapter::setDevice(string name){
 
  string RedisAdapter::getValue(string key){
 
-  return *(_redisCluster.get(key));
+  auto val = _redisCluster.get(key);
+  if (!val) {
+    throw std::runtime_error("Key not found: " + key);
+  }
+  return *val;
 }
 
 void RedisAdapter::setValue(string key, string val){
@@ -177,7 +183,7 @@ void RedisAdapter::streamRead(string key, string time, int count, ItemStream& de
   try{
     _redisCluster.xrevrange(key, "+","-", count, back_inserter(dest));
   }catch (const std::exception &err) {
-    TRACE(1,"xadd(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
+    TRACE(1,"xrevrange(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
   }
 }
 
@@ -186,7 +192,7 @@ void RedisAdapter::streamRead(string key, string time, int count, vector<float>&
 
   try{
     ItemStream result;
-    streamRead(key,time,1, result);
+    streamRead(key,time,count, result);
     for(auto data : result){
         string timeID = data.first;
         for (auto val : data.second){
@@ -197,7 +203,7 @@ void RedisAdapter::streamRead(string key, string time, int count, vector<float>&
         }
     }  
   }catch (const std::exception &err) {
-    TRACE(1,"xadd(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
+    TRACE(1,"xrevrange(" + key + ", " +time + ":" + to_string(count) + ", ...) failed: " + err.what());
   }
 }
 
@@ -260,7 +266,7 @@ void RedisAdapter::setDeviceStatus(bool status){
 
 void RedisAdapter::copyKey( string src, string dest, bool data){
   if (data)
-    _redisCluster.command<void>("copy", src, dest);
+    _redisCluster.command<void>("copy", src, dest, "REPLACE");
   else
     _redisCluster.command<void>("copy", src, dest);
 
@@ -338,7 +344,7 @@ void RedisAdapter::listener(){
 
             _sub.on_message([&](std::string key, std::string msg) { 
 
-                  auto search = subscriptions.find(msg);
+                  auto search = subscriptions.find(key);
                   if (search != subscriptions.end()) {
                     search->second( key, msg);
                   }

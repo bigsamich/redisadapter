@@ -63,6 +63,7 @@ class RedisAdapterCluster: public IRedisAdapter {
 	virtual void streamRead(string key, string time, int count, vector<float>& result);
 	virtual void streamRead(string key, string time, int count, ItemStream& dest);
 	virtual void streamTrim(string key, int size);
+	virtual ItemStream logRead(uint count);
 	virtual vector<pair<string,string>> logRead(string key, uint count);
 	virtual void logWrite(string key, string msg, string source);
 
