@@ -137,8 +137,8 @@ class RedisAdapterSingle: public IRedisAdapter {
     thread _listener;
 
 
-	map<string, std::function<void(std::string,std::string,std::string)>> patternSubscriptions;
-	map<string, std::function<void(std::string,std::string)>> subscriptions;
+	multimap<string, std::function<void(std::string,std::string,std::string)>> patternSubscriptions;
+	multimap<string, std::function<void(std::string,std::string)>> subscriptions;
 	map<string, std::function<void(std::string,std::string)>> commands;
 	
 

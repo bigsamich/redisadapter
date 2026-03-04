@@ -329,18 +329,18 @@ void RedisAdapter::listener(){
                   search->second(key, msg);
                 }
                 else{
-                  auto patternsearch = patternSubscriptions.find(pattern);
-                  if (patternsearch != patternSubscriptions.end()) {
-                    patternsearch->second(pattern, key, msg);
+                  auto range = patternSubscriptions.equal_range(pattern);
+                  for (auto it = range.first; it != range.second; ++it) {
+                    it->second(pattern, key, msg);
                   }
                 }
             });
 
             _sub.on_message([&](std::string key, std::string msg) { 
 
-                  auto search = subscriptions.find(msg);
-                  if (search != subscriptions.end()) {
-                    search->second( key, msg);
+                  auto range = subscriptions.equal_range(key);
+                  for (auto it = range.first; it != range.second; ++it) {
+                    it->second(key, msg);
                   }
             });
             //The default is everything published on ChannelKey
